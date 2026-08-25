@@ -1,98 +1,312 @@
-jQuery(document).ready(function($) {
+jQuery(document).ready(function ($) {
+    'use strict';
 
+    var isSyncInProgress = false;
+    var autoReloadInterval = null;
+    var progressInterval = null;
+    var countdownInterval = null;
 
-   $('#blk-start-import').click(function(e) {
-      e.preventDefault();
+    // ─── Toast Notifications ───
+    function showToast(message, type) {
+        type = type || 'info';
+        var icons = { success: 'yes-alt', error: 'warning', info: 'info', warning: 'flag' };
+        var toast = $('<div class="blk-toast blk-toast-' + type + '">' +
+            '<span class="dashicons dashicons-' + (icons[type] || 'info') + '"></span>' +
+            '<span>' + message + '</span>' +
+            '</div>');
 
-      var $startButton = $(this);
-      $startButton.addClass('disabled');
+        $('.blk-wrap').prepend(toast);
+        setTimeout(function () {
+            toast.fadeOut(300, function () { toast.remove(); });
+        }, 6000);
+    }
 
-      $.ajax({
-         url: '/?action=blkSynchronizer&method=synchronize',
-         type: 'POST',
-         success: function(data) {
-               console.log('import complete'); // Handle the response data
-               $startButton.removeClass('disabled');
-         },
-         error: function(jqXHR, textStatus, errorThrown) {
-               console.error('There has been a problem with your AJAX operation:', textStatus, errorThrown);
-               $startButton.removeClass('disabled');
-               // Handle errors here
-         }
-      });
-   });
+    // ─── Sync Status Banner with Progress Bar ───
+    function showSyncBanner() {
+        if ($('.blk-sync-banner').length) return;
+        var banner = $(
+            '<div class="blk-sync-banner">' +
+                '<div class="blk-sync-banner-content">' +
+                    '<div class="blk-spinner"></div>' +
+                    '<div class="blk-sync-info">' +
+                        '<span class="blk-sync-text">Starting synchronization...</span>' +
+                        '<div class="blk-progress" style="margin: 6px 0 0;">' +
+                            '<div class="blk-progress-bar green" style="width: 0%;" id="blk-progress-bar"></div>' +
+                        '</div>' +
+                        '<span class="blk-sync-detail" style="font-size: 12px; color: #64748b;"></span>' +
+                    '</div>' +
+                '</div>' +
+            '</div>'
+        );
+        $('.blk-tabs').after(banner);
+        startProgressPolling();
+    }
 
+    function hideSyncBanner() {
+        stopProgressPolling();
+        $('.blk-sync-banner').fadeOut(300, function () { $(this).remove(); });
+    }
 
-   $('#blk-stop-import').click(function (e) {
-      e.preventDefault();
+    // ─── Progress Bar Polling ───
+    function startProgressPolling() {
+        if (progressInterval) return;
+        progressInterval = setInterval(function () {
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: { action: 'blk_sync_progress', nonce: blkAdminPageData.nonce },
+                success: function (response) {
+                    if (!response.success) return;
+                    var d = response.data;
+                    var pct = d.percent || 0;
+                    $('#blk-progress-bar').css('width', pct + '%');
+                    if (d.message) {
+                        $('.blk-sync-text').text(d.message);
+                    }
+                    if (d.step === 'done') {
+                        $('#blk-progress-bar').css('width', '100%');
+                    }
+                }
+            });
+        }, 2000);
+    }
 
-      var data = {
-            action: 'blk_stop_import',
-      };
+    function stopProgressPolling() {
+        if (progressInterval) {
+            clearInterval(progressInterval);
+            progressInterval = null;
+        }
+    }
 
-      $.ajax({
+    // ─── Auto-reload logs ───
+    function startAutoReload() {
+        if (autoReloadInterval) return;
+        autoReloadInterval = setInterval(function () {
+            var f = $('#blk-log-file-select').val();
+            if (!f) return;
+            $.get(blkAdminPageData.logFilePath + f + '?t=' + Date.now(), function (r) {
+                renderLog(r);
+            });
+        }, 2500);
+    }
+
+    function stopAutoReload() {
+        if (autoReloadInterval) {
+            clearInterval(autoReloadInterval);
+            autoReloadInterval = null;
+        }
+    }
+
+    // ─── Render Log Content ───
+    function renderLog(content) {
+        var container = $('#blk-log');
+        if (!content || !content.trim()) {
+            container.html('<div class="blk-log-empty"><span class="dashicons dashicons-media-text" style="font-size:32px;margin-bottom:8px;display:block;"></span>No log data available</div>');
+            return;
+        }
+        if (typeof Prism !== 'undefined' && Prism.languages.log) {
+            var h = Prism.highlight(content, Prism.languages.log, 'log');
+            container.html('<pre class="language-log"><code>' + h + '</code></pre>');
+        } else {
+            container.html('<pre><code>' + $('<span>').text(content).html() + '</code></pre>');
+        }
+        var pre = container.find('pre')[0];
+        if (pre) pre.scrollTop = pre.scrollHeight;
+    }
+
+    function loadLogFile(path) {
+        $('#blk-log-file-select').prop('disabled', true);
+        $.get(path + '?t=' + Date.now(), function (r) {
+            renderLog(r);
+        }).fail(function () {
+            $('#blk-log').html('<div class="blk-log-empty">Failed to load log file</div>');
+        }).always(function () {
+            $('#blk-log-file-select').prop('disabled', false);
+        });
+    }
+
+    // ─── Check Sync Status ───
+    function checkSyncStatus() {
+        $.ajax({
             url: ajaxurl,
             type: 'POST',
-            data: data,
-            beforeSend: function (xhr) {
-               $('#blk-stop-import').addClass('disabled');
-               //  $('#frymo_ajax_result').html('&nbsp;');
-            },
+            data: { action: 'blk_sync_status', nonce: blkAdminPageData.nonce },
             success: function (response) {
-               $('#blk-stop-import').removeClass('disabled');
-               //  $('#frymo_ajax_result').html(response);
-               console.log(response);
+                if (response.success && response.data.status === 'completed') {
+                    stopAutoReload();
+                    hideSyncBanner();
+                    isSyncInProgress = false;
+                    $('#blk-start-import').removeClass('disabled').prop('disabled', false);
+                    showToast('Synchronization completed successfully!', 'success');
+                }
             }
-      });
-   });
+        });
+    }
 
+    // ─── Countdown Timer ───
+    function startCountdown() {
+        var el = $('#blk-countdown');
+        if (!el.length) return;
 
-   // Function to load log file content
-   function loadLogFile(filePath) {
+        var target = parseInt(el.data('timestamp'), 10);
+        if (!target || isNaN(target)) {
+            el.text('Not scheduled');
+            return;
+        }
 
-      $('#blk-log-file-select').prop('disabled', true);
-      $('#blk-log-reload').addClass('disabled');
-      $('#blk-log-reload').blur();
+        function tick() {
+            var now = Math.floor(Date.now() / 1000);
+            var diff = target - now;
+            if (diff <= 0) {
+                el.html('<span class="blk-badge warn">Running now...</span>');
+                return;
+            }
+            var h = Math.floor(diff / 3600);
+            var m = Math.floor((diff % 3600) / 60);
+            var s = diff % 60;
+            var parts = [];
+            if (h > 0) parts.push(h + 'h');
+            parts.push(m + 'm');
+            parts.push(s + 's');
+            el.text(parts.join(' '));
+        }
 
-      // Append a timestamp to the file path to prevent caching
-      var cacheBuster = "?t=" + new Date().getTime();
-      $.get(filePath + cacheBuster, function(response) {
-      
-      
-         // Use 'plaintext' for generic highlighting without specific syntax rules
-         var new_code = Prism.highlight(response, Prism.languages.log, 'log');
-      
-      
-         // Ensure your <pre> and <code> tags use a language class that matches what you've passed to Prism.highlight
-         $('#blk-log').html(`<pre class="language-log"><code>${new_code}</code></pre>`);
-         $('#blk-log pre').scrollTop($('#blk-log pre')[0].scrollHeight)
-      });
+        tick();
+        countdownInterval = setInterval(tick, 1000);
+    }
 
-      setTimeout(function() {
-         $('#blk-log-file-select').prop('disabled', false);
-         $('#blk-log-reload').removeClass('disabled');
-      }, 500);
-   }
+    // ─── Start Import ───
+    $(document).on('click', '#blk-start-import', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        if ($btn.hasClass('disabled')) return;
 
-   var currentFile = $('#blk-log-file-select').val();
-   var logFilePath = blkAdminPageData.logFilePath + currentFile;
+        $btn.addClass('disabled').prop('disabled', true);
+        isSyncInProgress = true;
+        showSyncBanner();
+        startAutoReload();
 
-   loadLogFile(logFilePath);
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'blk_start_import', nonce: blkAdminPageData.nonce },
+            success: function () { showToast('Synchronization started.', 'info'); },
+            error: function () {
+                showToast('Error starting synchronization.', 'error');
+                $btn.removeClass('disabled').prop('disabled', false);
+                hideSyncBanner();
+                isSyncInProgress = false;
+                stopAutoReload();
+            }
+        });
+    });
 
-   // Handle change event for the log file selection
-   $('#blk-log-file-select').change(function() {
-      var selectedFile = $(this).val();
-      var logFilePath = blkAdminPageData.logFilePath + selectedFile;
-      loadLogFile(logFilePath);
-   });
+    // ─── Stop Import ───
+    $(document).on('click', '#blk-stop-import', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.addClass('disabled').prop('disabled', true);
 
-   // Handle click event for the "Reload" link
-   $('#blk-log-reload').click(function(e) {
-      e.preventDefault();
-      var currentFile = $('#blk-log-file-select').val();
-      var logFilePath = blkAdminPageData.logFilePath + currentFile;
-      loadLogFile(logFilePath);
-   });
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'blk_stop_import', nonce: blkAdminPageData.nonce },
+            success: function () {
+                stopAutoReload();
+                hideSyncBanner();
+                isSyncInProgress = false;
+                $('#blk-start-import').removeClass('disabled').prop('disabled', false);
+                showToast('Stop signal sent.', 'warning');
+            },
+            complete: function () { $btn.removeClass('disabled').prop('disabled', false); }
+        });
+    });
 
+    // ─── Test Connection ───
+    $(document).on('click', '#blk-test-connection', function (e) {
+        e.preventDefault();
+        var $btn = $(this);
+        var $result = $('#blk-connection-result');
+        $btn.addClass('disabled').prop('disabled', true);
+        $result.html('<span style="color:var(--blk-text-muted);">Testing...</span>').show();
 
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: { action: 'blk_test_connection', nonce: blkAdminPageData.nonce },
+            success: function (response) {
+                if (response.success) {
+                    var d = response.data;
+                    var html = '<div class="blk-toast blk-toast-success" style="margin:0;">' +
+                        '<span class="dashicons dashicons-yes-alt"></span>' +
+                        '<span>' + d.message + '</span></div>';
+
+                    if (d.inventories && d.inventories.length) {
+                        html += '<div style="margin-top:12px;">';
+                        d.inventories.forEach(function (inv) {
+                            html += '<div style="padding:8px 0;border-bottom:1px solid var(--blk-border);font-size:13px;">';
+                            html += '<strong>' + inv.name + '</strong>';
+                            if (inv.is_default) html += ' <span class="blk-badge on">Default</span>';
+                            html += '<br><span style="color:var(--blk-text-muted);">';
+                            html += 'ID: ' + inv.inventory_id;
+                            html += ' | Price group: ' + inv.default_price_group;
+                            html += ' | Warehouse: ' + inv.default_warehouse;
+                            html += ' | Language: ' + inv.default_language;
+                            if (inv.languages && inv.languages.length) {
+                                html += ' | All languages: ' + inv.languages.join(', ');
+                            }
+                            html += '</span></div>';
+                        });
+                        html += '</div>';
+                    }
+                    $result.html(html);
+                } else {
+                    $result.html('<div class="blk-toast blk-toast-error" style="margin:0;">' +
+                        '<span class="dashicons dashicons-warning"></span>' +
+                        '<span>' + (response.data || 'Connection failed') + '</span></div>');
+                }
+            },
+            error: function () {
+                $result.html('<div class="blk-toast blk-toast-error" style="margin:0;">Network error</div>');
+            },
+            complete: function () { $btn.removeClass('disabled').prop('disabled', false); }
+        });
+    });
+
+    // ─── Log File Select / Reload ───
+    $(document).on('change', '#blk-log-file-select', function () {
+        loadLogFile(blkAdminPageData.logFilePath + $(this).val());
+    });
+    $(document).on('click', '#blk-log-reload', function (e) {
+        e.preventDefault();
+        var f = $('#blk-log-file-select').val();
+        if (f) loadLogFile(blkAdminPageData.logFilePath + f);
+    });
+
+    // ─── Status polling ───
+    setInterval(function () {
+        if (isSyncInProgress) checkSyncStatus();
+    }, 3000);
+
+    // ─── Initial load ───
+    var currentFile = $('#blk-log-file-select').val();
+    if (currentFile) loadLogFile(blkAdminPageData.logFilePath + currentFile);
+
+    // Check if sync already running
+    $.ajax({
+        url: ajaxurl,
+        type: 'POST',
+        data: { action: 'blk_sync_status', nonce: blkAdminPageData.nonce },
+        success: function (response) {
+            if (response.success && response.data.status === 'in_progress') {
+                isSyncInProgress = true;
+                showSyncBanner();
+                startAutoReload();
+                $('#blk-start-import').addClass('disabled').prop('disabled', true);
+            }
+        }
+    });
+
+    // Start countdown timer if present
+    startCountdown();
 });

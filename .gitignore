@@ -2,3 +2,6 @@ old-products.json
 new-products.json
 .import-lock
 .import-stop
+.sync-progress.json
+_new-products_old.txt
+_old-products_old.txt

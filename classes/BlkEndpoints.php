@@ -1,31 +1,45 @@
 <?php
 
-class BlkEndpoints
-{
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+class BlkEndpoints {
+
+    /** @var BlkSynchronizer */
     public BlkSynchronizer $bs;
 
-    public function __construct($bs)
-    {
+    public function __construct( BlkSynchronizer $bs ) {
         $this->bs = $bs;
-        add_action('init', [$this, 'blkSynchronizerEndpoints']);
+        add_action( 'init', [ $this, 'register_endpoints' ] );
     }
 
-    public function blkSynchronizerEndpoints(): void
-    {
-        $action = !empty($_GET['action']) ? $_GET['action'] : '';
-        $method = !empty($_GET['method']) ? $_GET['method'] : '';
+    /**
+     * Register query-string based endpoints for external triggers.
+     */
+    public function register_endpoints(): void {
+        $action = sanitize_text_field( $_GET['action'] ?? '' );
+        $method = sanitize_text_field( $_GET['method'] ?? '' );
 
-        if ($action === 'blkSynchronizer') {
-            switch ($method) {
-                // ?action=blkSynchronizer&method=synchronize
-                case 'synchronize':
-                    ini_set('ignore_user_abort', true);
+        if ( $action !== 'blkSynchronizer' ) {
+            return;
+        }
+
+        switch ( $method ) {
+            case 'synchronize':
+                if ( function_exists( 'ignore_user_abort' ) ) {
+                    ignore_user_abort( true );
+                }
+                try {
                     $this->bs->startSynchronize();
-                    break;
+                } catch ( Exception $e ) {
+                    blk_error_log( 'Endpoint synchronize error: ' . $e->getMessage() );
+                }
+                break;
 
-            }
+            default:
+                blk_error_log( 'Unknown endpoint method called: ' . $method );
+                break;
         }
     }
 }
-
-
