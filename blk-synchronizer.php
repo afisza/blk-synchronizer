@@ -5,9 +5,9 @@
  *
  * @wordpress-plugin
  * Plugin Name:   BaseLinker Synchronizer Extended
- * Plugin URI:    https://github.com/webdevs-pro/blk-synchronizer
+ * Plugin URI:    https://github.com/afisza/blk-synchronizer
  * Description:   Synchronization of BaseLinker and WooCommerce
- * Version:       3.1
+ * Version:       3.1.1
  * Author:        Alex Shram
  * Author URI:    https://afisza.com/
  * Text Domain:   blk-synchronizer-main
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Plugin constants
 define( 'BLK_SYNCHRONIZER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'BLK_SYNCHRONIZER_DIR_URL', plugin_dir_url( __FILE__ ) );
-define( 'BLK_PLUGIN_VERSION', '3.1' );
+define( 'BLK_PLUGIN_VERSION', '3.1.1' );
 define( 'BLK_SYNCHRONIZER_LOGS_PATH', WP_CONTENT_DIR . '/uploads/blk-logs/' );
 define( 'BLK_SYNCHRONIZER_LOGS_URL', content_url( '/uploads/blk-logs/' ) );
 define( 'BLK_LOCK_MAX_AGE', 600 ); // 10 minutes in seconds
@@ -232,14 +232,20 @@ add_action( 'wp_ajax_blk_sync_status', function() {
         wp_send_json_error( 'Unauthorized', 403 );
     }
 
-    $status = blk_is_import_locked() ? 'in_progress' : 'completed';
-    wp_send_json_success( [ 'status' => $status ] );
+    $status    = blk_is_import_locked() ? 'in_progress' : 'completed';
+    $next_sync = wp_next_scheduled( 'blkSynchronizer' );
+
+    wp_send_json_success( [
+        'status'            => $status,
+        'next_sync'         => $next_sync ? intval( $next_sync ) : 0,
+        'next_sync_display' => $next_sync ? date_i18n( 'H:i:s', $next_sync + ( get_option( 'gmt_offset' ) * 3600 ) ) : '',
+    ] );
 });
 
 // Plugin Update Checker
 require_once BLK_SYNCHRONIZER_PATH . 'vendor/autoload.php';
 $UpdateChecker = PucFactory::buildUpdateChecker(
-    'https://github.com/webdevs-pro/blk-synchronizer',
+    'https://github.com/afisza/blk-synchronizer',
     __FILE__,
     'blk-synchronizer'
 );

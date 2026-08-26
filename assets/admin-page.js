@@ -154,11 +154,45 @@ jQuery(document).ready(function ($) {
             return;
         }
 
+        var refreshInFlight = false;
+        var lastRefreshAt = 0;
+
+        // The rendered data-timestamp goes stale once the event fires. Poll the
+        // sync-status endpoint (throttled) for the next occurrence so the badge
+        // flips back from "Running now..." to a live countdown without a reload.
+        function refreshTarget() {
+            var nowMs = Date.now();
+            if (refreshInFlight || nowMs - lastRefreshAt < 10000) return;
+            refreshInFlight = true;
+            lastRefreshAt = nowMs;
+
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: { action: 'blk_sync_status', nonce: blkAdminPageData.nonce },
+                success: function (response) {
+                    if (!response.success || !response.data) return;
+                    var next = parseInt(response.data.next_sync, 10);
+                    if (next && next > Math.floor(Date.now() / 1000)) {
+                        target = next;
+                        el.data('timestamp', next).attr('data-timestamp', next);
+                        if (response.data.next_sync_display) {
+                            el.next('.blk-badge').text(response.data.next_sync_display);
+                        }
+                    }
+                },
+                complete: function () {
+                    refreshInFlight = false;
+                }
+            });
+        }
+
         function tick() {
             var now = Math.floor(Date.now() / 1000);
             var diff = target - now;
             if (diff <= 0) {
                 el.html('<span class="blk-badge warn">Running now...</span>');
+                refreshTarget();
                 return;
             }
             var h = Math.floor(diff / 3600);
