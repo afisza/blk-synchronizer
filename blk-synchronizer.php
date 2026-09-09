@@ -7,7 +7,7 @@
  * Plugin Name:   BaseLinker Synchronizer Extended
  * Plugin URI:    https://github.com/afisza/blk-synchronizer
  * Description:   Synchronization of BaseLinker and WooCommerce
- * Version:       3.1.1
+ * Version:       3.2.0
  * Author:        Alex Shram
  * Author URI:    https://afisza.com/
  * Text Domain:   blk-synchronizer-main
@@ -21,7 +21,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Plugin constants
 define( 'BLK_SYNCHRONIZER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'BLK_SYNCHRONIZER_DIR_URL', plugin_dir_url( __FILE__ ) );
-define( 'BLK_PLUGIN_VERSION', '3.1.1' );
+define( 'BLK_PLUGIN_VERSION', '3.2.0' );
 define( 'BLK_SYNCHRONIZER_LOGS_PATH', WP_CONTENT_DIR . '/uploads/blk-logs/' );
 define( 'BLK_SYNCHRONIZER_LOGS_URL', content_url( '/uploads/blk-logs/' ) );
 define( 'BLK_LOCK_MAX_AGE', 600 ); // 10 minutes in seconds
@@ -39,6 +39,95 @@ require_once BLK_SYNCHRONIZER_PATH . 'classes/BlkHooks.php';
 require_once BLK_SYNCHRONIZER_PATH . 'classes/BlkEndpoints.php';
 require_once BLK_SYNCHRONIZER_PATH . 'helper.php';
 require_once BLK_SYNCHRONIZER_PATH . 'admin.php';
+
+// Elementor widget: Omnibus-directive lowest-30-day-price disclosure.
+add_action( 'elementor/widgets/register', function( $widgets_manager ) {
+    require_once BLK_SYNCHRONIZER_PATH . 'classes/BlkOmnibusWidget.php';
+    $widgets_manager->register( new BlkOmnibusWidget() );
+});
+
+// Register the Omnibus widget's label with WPML String Translation and
+// seed the Ukrainian translation, so it's ready without a manual step in
+// WPML → String Translation. Safe to run on every request (idempotent).
+add_action( 'init', function() {
+    if ( ! has_action( 'wpml_register_single_string' ) || ! function_exists( 'icl_get_string_id' ) || ! function_exists( 'icl_add_string_translation' ) ) {
+        return;
+    }
+
+    $context = 'blk-synchronizer-main';
+    $name    = 'omnibus_widget_label';
+    $value   = 'Najniższa cena z 30 dni przed obniżką:';
+
+    do_action( 'wpml_register_single_string', $context, $name, $value );
+
+    $string_id = icl_get_string_id( $name, $context );
+    if ( ! $string_id ) {
+        return;
+    }
+
+    $translations = apply_filters( 'wpml_get_string_translations', null, $string_id );
+    if ( ! empty( $translations['uk'] ) ) {
+        return; // Already translated (manually or by us before) - don't overwrite.
+    }
+
+    icl_add_string_translation( $string_id, 'uk', 'Найнижча ціна за останні 30 днів перед знижкою:', ICL_TM_COMPLETE );
+}, 20 );
+
+// Show the tracked Omnibus data (read-only) in the WooCommerce product editor,
+// right under the sale price field, so admins don't have to guess what the
+// sync computed.
+add_action( 'woocommerce_product_options_pricing', function() {
+    global $post;
+    if ( ! $post ) {
+        return;
+    }
+
+    $lowest  = get_post_meta( $post->ID, '_blk_omnibus_lowest_30d', true );
+    $history = get_post_meta( $post->ID, '_blk_omnibus_price_history', true );
+    $history = is_array( $history ) ? $history : [];
+    krsort( $history );
+
+    $is_fallback = false;
+    if ( ( $lowest === '' || $lowest === null ) && function_exists( 'wc_get_product' ) ) {
+        // No tracked history yet (not touched by a sync yet) - fall back to
+        // the product's current regular price rather than showing nothing.
+        $product = wc_get_product( $post->ID );
+        if ( $product ) {
+            $regular = $product->get_regular_price();
+            if ( $regular !== '' ) {
+                $lowest      = $regular;
+                $is_fallback = true;
+            }
+        }
+    }
+
+    echo '<style>.blk-omnibus-info-field label{line-height:1.4;height:auto;}</style>';
+    echo '<p class="form-field blk-omnibus-info-field">';
+    echo '<label>' . esc_html__( 'Omnibus - najniższa cena z 30 dni', 'blk-synchronizer-main' ) . '</label>';
+
+    if ( $lowest !== '' && $lowest !== null ) {
+        echo '<strong>' . esc_html( number_format_i18n( (float) $lowest, 2 ) ) . ' zł</strong>';
+        if ( $is_fallback ) {
+            echo ' <em>(' . esc_html__( 'brak historii - pokazana cena bieżąca', 'blk-synchronizer-main' ) . ')</em>';
+        }
+    } else {
+        echo '<span style="color:#a00;">' . esc_html__( 'Brak danych', 'blk-synchronizer-main' ) . '</span>';
+    }
+
+    echo '<span class="description">' . esc_html__( 'Wyliczane automatycznie z historii cen zbieranej przy każdej synchronizacji BaseLinker.', 'blk-synchronizer-main' ) . '</span>';
+
+    if ( ! empty( $history ) ) {
+        echo '<span class="description" style="display:block;margin-top:4px;">' . esc_html__( 'Historia (ost. 30 dni):', 'blk-synchronizer-main' ) . ' ';
+        $rows = [];
+        foreach ( $history as $date => $price ) {
+            $rows[] = esc_html( $date . ': ' . number_format_i18n( (float) $price, 2 ) . ' zł' );
+        }
+        echo implode( ', ', $rows );
+        echo '</span>';
+    }
+
+    echo '</p>';
+});
 
 add_action( 'init', function() {
     load_plugin_textdomain( 'blk-synchronizer-main', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );

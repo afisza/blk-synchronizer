@@ -125,6 +125,53 @@ jQuery(document).ready(function ($) {
         });
     }
 
+    // ─── Persistent "Last Synchronization" Summary ───
+    // Unlike the toast (which fades after 6s) and the banner (which
+    // disappears as soon as the sync is done), this box stays visible on
+    // the dashboard until the next sync starts.
+    function showLastSyncSummary(message, time, stats) {
+        if (!message) return;
+        var $box = $('#blk-last-sync-summary');
+        $box.find('.blk-last-sync-title strong').html(
+            'Last synchronization<span id="blk-last-sync-time">' + (time ? ' (' + time + ')' : '') + '</span>:'
+        );
+
+        if (stats) {
+            var val = function (v) { return (v === undefined || v === null) ? 0 : v; };
+            var tableHtml =
+                '<table class="blk-last-sync-table" id="blk-last-sync-table">' +
+                    '<thead><tr><th>Duration</th><th>Added</th><th>Updated</th><th>Removed</th><th>Ignored</th></tr></thead>' +
+                    '<tbody><tr>' +
+                        '<td>' + (stats.duration || '—') + '</td>' +
+                        '<td>' + val(stats.added) + '</td>' +
+                        '<td>' + val(stats.updated) + '</td>' +
+                        '<td>' + val(stats.removed) + '</td>' +
+                        '<td>' + val(stats.ignored) + '</td>' +
+                    '</tr></tbody>' +
+                '</table>';
+            var $existingTable = $box.find('#blk-last-sync-table');
+            if ($existingTable.length) {
+                $existingTable.replaceWith(tableHtml);
+            } else {
+                $box.find('#blk-last-sync-message').remove();
+                $box.append(tableHtml);
+            }
+        } else {
+            $box.find('#blk-last-sync-table').remove();
+            if ($box.find('#blk-last-sync-message').length) {
+                $box.find('#blk-last-sync-message').text(message);
+            } else {
+                $box.append('<span id="blk-last-sync-message">' + message + '</span>');
+            }
+        }
+
+        $box.show();
+    }
+
+    function hideLastSyncSummary() {
+        $('#blk-last-sync-summary').hide();
+    }
+
     // ─── Check Sync Status ───
     function checkSyncStatus() {
         $.ajax({
@@ -134,10 +181,23 @@ jQuery(document).ready(function ($) {
             success: function (response) {
                 if (response.success && response.data.status === 'completed') {
                     stopAutoReload();
-                    hideSyncBanner();
                     isSyncInProgress = false;
                     $('#blk-start-import').removeClass('disabled').prop('disabled', false);
                     showToast('Synchronization completed successfully!', 'success');
+
+                    // Grab the final progress message before the banner
+                    // disappears, and keep it visible persistently.
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: { action: 'blk_sync_progress', nonce: blkAdminPageData.nonce },
+                        success: function (progressResponse) {
+                            if (progressResponse.success && progressResponse.data) {
+                                showLastSyncSummary(progressResponse.data.message, progressResponse.data.time, progressResponse.data.stats);
+                            }
+                        },
+                        complete: function () { hideSyncBanner(); }
+                    });
                 }
             }
         });
@@ -217,6 +277,7 @@ jQuery(document).ready(function ($) {
 
         $btn.addClass('disabled').prop('disabled', true);
         isSyncInProgress = true;
+        hideLastSyncSummary();
         showSyncBanner();
         startAutoReload();
 

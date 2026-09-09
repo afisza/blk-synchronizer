@@ -54,6 +54,8 @@ class BlkSettingsPage {
         $sanitized['blk_api_token']            = sanitize_text_field( $input['blk_api_token'] ?? '' );
         $sanitized['blk_inventory_id']         = absint( $input['blk_inventory_id'] ?? 0 );
         $sanitized['blk_price_group_id']       = absint( $input['blk_price_group_id'] ?? 0 );
+        $sanitized['blk_price_group_id_before_promo'] = absint( $input['blk_price_group_id_before_promo'] ?? 0 );
+        $sanitized['blk_promo_category_id']    = absint( $input['blk_promo_category_id'] ?? 0 );
         $sanitized['blk_warehouse_id']         = sanitize_text_field( $input['blk_warehouse_id'] ?? '' );
         $sanitized['blk_default_language']     = sanitize_text_field( $input['blk_default_language'] ?? 'pl' );
         $sanitized['blk_categories_to_ignore'] = sanitize_text_field( $input['blk_categories_to_ignore'] ?? '' );
@@ -219,6 +221,42 @@ class BlkSettingsPage {
                         <button id="blk-stop-import" class="blk-btn blk-btn-danger">
                             <span class="dashicons dashicons-controls-pause"></span> Stop Sync
                         </button>
+                    </div>
+
+                    <?php
+                    $last_progress_file = BLK_SYNCHRONIZER_PATH . '.sync-progress.json';
+                    $last_progress      = file_exists( $last_progress_file ) ? json_decode( file_get_contents( $last_progress_file ), true ) : null;
+                    $last_stats         = $last_progress['stats'] ?? null;
+                    ?>
+                    <div id="blk-last-sync-summary" class="blk-last-sync-summary" <?php echo empty( $last_progress['message'] ) ? 'style="display:none;"' : ''; ?>>
+                        <div class="blk-last-sync-title">
+                            <span class="dashicons dashicons-yes-alt"></span>
+                            <strong>Last synchronization<span id="blk-last-sync-time"><?php echo ! empty( $last_progress['time'] ) ? ' (' . esc_html( $last_progress['time'] ) . ')' : ''; ?></span>:</strong>
+                        </div>
+                        <?php if ( $last_stats ) : ?>
+                            <table class="blk-last-sync-table" id="blk-last-sync-table">
+                                <thead>
+                                    <tr>
+                                        <th>Duration</th>
+                                        <th>Added</th>
+                                        <th>Updated</th>
+                                        <th>Removed</th>
+                                        <th>Ignored</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><?php echo esc_html( $last_stats['duration'] ?? '—' ); ?></td>
+                                        <td><?php echo esc_html( $last_stats['added'] ?? 0 ); ?></td>
+                                        <td><?php echo esc_html( $last_stats['updated'] ?? 0 ); ?></td>
+                                        <td><?php echo esc_html( $last_stats['removed'] ?? 0 ); ?></td>
+                                        <td><?php echo esc_html( $last_stats['ignored'] ?? 0 ); ?></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        <?php else : ?>
+                            <span id="blk-last-sync-message"><?php echo esc_html( $last_progress['message'] ?? '' ); ?></span>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -407,6 +445,26 @@ class BlkSettingsPage {
                                    value="<?php echo esc_attr( $blk_settings['blk_price_group_id'] ?? 0 ); ?>"
                                    min="0">
                             <div class="help">Which price group to use for WooCommerce prices (gross). Set 0 for default.</div>
+                        </div>
+
+                        <div class="blk-input-group">
+                            <label for="blk_price_group_id_before_promo">Price Group ID (przed promocją)</label>
+                            <input type="number" id="blk_price_group_id_before_promo"
+                                   name="blk_settings[blk_price_group_id_before_promo]"
+                                   class="blk-input" style="width: 160px;"
+                                   value="<?php echo esc_attr( $blk_settings['blk_price_group_id_before_promo'] ?? 0 ); ?>"
+                                   min="0">
+                            <div class="help">ID grupy cenowej "przed promocją" w BaseLinkerze. Gdy cena z tej grupy jest wyższa niż cena domyślna, produkt dostaje cenę promocyjną w WooCommerce (regular_price = ta grupa, sale_price = cena domyślna). Zostaw 0, aby wyłączyć obsługę cen promocyjnych.</div>
+                        </div>
+
+                        <div class="blk-input-group">
+                            <label for="blk_promo_category_id">Promo Category ID</label>
+                            <input type="number" id="blk_promo_category_id"
+                                   name="blk_settings[blk_promo_category_id]"
+                                   class="blk-input" style="width: 160px;"
+                                   value="<?php echo esc_attr( $blk_settings['blk_promo_category_id'] ?? 0 ); ?>"
+                                   min="0">
+                            <div class="help">ID kategorii WooCommerce (product_cat) "Promocje" (np. 231 = promocje-bestmarket). Produkt z aktywną ceną promocyjną dostaje tę kategorię dodatkowo (bez usuwania innych), a traci ją, gdy promocja się kończy. Zostaw 0, aby wyłączyć.</div>
                         </div>
 
                         <div class="blk-input-group">

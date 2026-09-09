@@ -10,18 +10,21 @@ class BlkSynchronizer {
     private $ignored_products   = 0;
     private $deleted_ignored    = 0;
     private $price_group_id     = 0;
+    private $price_group_id_before_promo = 0;
+    private $promo_category_id  = 0;
     private $warehouse_id       = '';
     private $default_language    = 'pl';
 
     /**
      * Write sync progress for the frontend progress bar.
      */
-    private function update_progress( $step, $percent, $message = '' ) {
+    private function update_progress( $step, $percent, $message = '', $stats = null ) {
         $data = [
             'step'    => $step,
             'percent' => min( 100, max( 0, $percent ) ),
             'message' => $message,
             'time'    => date_i18n( 'H:i:s' ),
+            'stats'   => $stats,
         ];
         file_put_contents( BLK_SYNCHRONIZER_PATH . '.sync-progress.json', wp_json_encode( $data ) );
     }
@@ -96,7 +99,13 @@ class BlkSynchronizer {
 
         // Done
         $elapsed = number_format( microtime( true ) - $start_time, 2 );
-        $this->update_progress( 'done', 100, "Completed in {$elapsed}s. Added: " . count( $products_to_add ) . ", Updated: " . count( $products_to_update ) . ", Removed: " . count( $products_to_delete ) );
+        $this->update_progress( 'done', 100, "Completed in {$elapsed}s. Added: " . count( $products_to_add ) . ", Updated: " . count( $products_to_update ) . ", Removed: " . count( $products_to_delete ), [
+            'duration' => $elapsed . 's',
+            'added'    => count( $products_to_add ),
+            'updated'  => count( $products_to_update ),
+            'removed'  => count( $products_to_delete ),
+            'ignored'  => $this->ignored_products,
+        ] );
         blk_debug_log( "Synchronization completed in {$elapsed} seconds." );
         blk_debug_log( 'Ignored: ' . $this->ignored_products . ', Deleted ignored: ' . $this->deleted_ignored );
 
@@ -114,6 +123,8 @@ class BlkSynchronizer {
         $settings = get_option( 'blk_settings' );
 
         $this->price_group_id  = intval( $settings['blk_price_group_id'] ?? 0 );
+        $this->price_group_id_before_promo = intval( $settings['blk_price_group_id_before_promo'] ?? 0 );
+        $this->promo_category_id = intval( $settings['blk_promo_category_id'] ?? 0 );
         $this->warehouse_id    = $settings['blk_warehouse_id'] ?? '';
         $this->default_language = $settings['blk_default_language'] ?? 'pl';
 
@@ -167,6 +178,28 @@ class BlkSynchronizer {
 
         // Fallback: use the first available price
         return round( (float) reset( $prices ), 2 );
+    }
+
+    /**
+     * Resolve regular/sale price from the "domyślna" and "przed promocją" price
+     * groups. Promotion is active only when the "przed promocją" price is
+     * configured and strictly higher than the default price; otherwise the
+     * sale price is cleared (no promotion).
+     */
+    private function resolve_pricing( $prices ) {
+        $default = $this->extract_price( $prices );
+
+        if ( $this->price_group_id_before_promo <= 0 || ! is_array( $prices ) || ! isset( $prices[ $this->price_group_id_before_promo ] ) ) {
+            return [ 'regular' => $default, 'sale' => null ];
+        }
+
+        $before_promo = round( (float) $prices[ $this->price_group_id_before_promo ], 2 );
+
+        if ( $before_promo > $default ) {
+            return [ 'regular' => $before_promo, 'sale' => $default ];
+        }
+
+        return [ 'regular' => $default, 'sale' => null ];
     }
 
     /**
@@ -240,14 +273,16 @@ class BlkSynchronizer {
         $text_fields = $product['text_fields'] ?? [];
         $name        = $this->extract_name( $text_fields );
         $description = $this->clean_description( $this->extract_description( $text_fields ) );
+        $pricing     = $this->resolve_pricing( $product['prices'] ?? [] );
 
         return [
-            'product_id'   => $product['product_id'] ?? 0,
-            'sku'          => $product['sku'] ?? '',
-            'ean'          => $product['ean'] ?? '',
-            'name'         => $name,
-            'description'  => $description,
-            'price_brutto' => $this->extract_price( $product['prices'] ?? [] ),
+            'product_id'        => $product['product_id'] ?? 0,
+            'sku'               => $product['sku'] ?? '',
+            'ean'               => $product['ean'] ?? '',
+            'name'              => $name,
+            'description'       => $description,
+            'price_brutto'      => $pricing['regular'],
+            'price_sale_brutto' => $pricing['sale'],
             'quantity'     => $this->extract_stock( $product['stock'] ?? [] ),
             'weight'       => (string) ( $product['weight'] ?? '0' ),
             'tax_rate'     => $product['tax_rate'] ?? 0,
@@ -404,18 +439,39 @@ class BlkSynchronizer {
             }
 
             foreach ( $products as $product ) {
+                $regular = $product->get_regular_price();
+                $sale    = $product->get_sale_price();
+
                 $formatted_products[] = [
                     'sku'          => $product->get_sku(),
                     'ean'          => $product->get_meta( 'ean', true ),
                     'name'         => $product->get_name(),
                     'quantity'     => $product->get_stock_quantity(),
                     'price_netto'  => wc_get_price_excluding_tax( $product ),
-                    'price_brutto' => wc_get_price_including_tax( $product ),
+                    'price_brutto' => round( (float) $regular, 2 ),
+                    'price_sale_brutto' => $sale !== '' ? round( (float) $sale, 2 ) : null,
                     'weight'       => $product->get_weight(),
                     'category_id'  => $product->get_meta( 'blk_category_id', true ),
                     'images'       => $product->get_meta( 'blk_images', true ) ?: [],
                     'description'  => $product->get_description(),
                 ];
+
+                // Record today's actually-charged price for every product on
+                // every sync run (not just add/update), so a promotion that
+                // starts after a long flat-price streak still has real
+                // pre-reduction history to compare against (Omnibus).
+                if ( $regular !== '' ) {
+                    $this->record_omnibus_history( $product->get_id(), [
+                        'price_brutto'      => round( (float) $regular, 2 ),
+                        'price_sale_brutto' => $sale !== '' ? round( (float) $sale, 2 ) : null,
+                    ]);
+                }
+
+                // Reconcile the "Promocje" category against actual current
+                // state on every sync run too (not just add/update), so
+                // products whose promo was already active before this
+                // feature existed get categorized retroactively.
+                $this->sync_promo_category( $product->get_id(), $sale !== '' );
             }
 
             blk_debug_log( "Batch {$page}: fetched " . count( $products ) . ' products.' );
@@ -480,9 +536,18 @@ class BlkSynchronizer {
      * Check if product data has changed.
      */
     private function has_product_changed( $old, $new ) {
-        $keys = [ 'name', 'price_brutto', 'weight', 'quantity', 'description', 'images' ];
+        $keys = [ 'name', 'price_brutto', 'price_sale_brutto', 'weight', 'quantity', 'description', 'images' ];
 
         foreach ( $keys as $key ) {
+            // price_sale_brutto can legitimately be null (no promotion) - a
+            // transition to/from null is itself a change worth syncing.
+            if ( array_key_exists( $key, $old ) && array_key_exists( $key, $new ) && ( $old[ $key ] === null || $new[ $key ] === null ) ) {
+                if ( $old[ $key ] !== $new[ $key ] ) {
+                    return true;
+                }
+                continue;
+            }
+
             if ( ! isset( $old[ $key ], $new[ $key ] ) ) {
                 continue;
             }
@@ -614,6 +679,7 @@ class BlkSynchronizer {
                 }
 
                 $wcProduct->set_regular_price( round( (float) $blk_product['price_brutto'], 2 ) );
+                $wcProduct->set_sale_price( $blk_product['price_sale_brutto'] !== null ? round( (float) $blk_product['price_sale_brutto'], 2 ) : '' );
                 $wcProduct->set_weight( $blk_product['weight'] );
                 $wcProduct->set_name( $blk_product['name'] );
                 $wcProduct->set_manage_stock( true );
@@ -634,6 +700,9 @@ class BlkSynchronizer {
                 if ( ! empty( $blk_product['images'] ) && function_exists( 'fifu_dev_set_image_list' ) ) {
                     fifu_dev_set_image_list( $wc_id, $this->array_to_string_with_delimiter( $blk_product['images'] ) );
                 }
+
+                $this->record_omnibus_history( $wc_id, $blk_product );
+                $this->sync_promo_category( $wc_id, $blk_product['price_sale_brutto'] !== null );
 
                 // WPML: Sync to all translations
                 $this->sync_wpml_translations( $wc_id, $blk_product );
@@ -670,6 +739,7 @@ class BlkSynchronizer {
         $wcProduct->set_sku( $blk_product['sku'] );
         $wcProduct->set_name( $blk_product['name'] );
         $wcProduct->set_regular_price( $blk_product['price_brutto'] ?? '0' );
+        $wcProduct->set_sale_price( isset( $blk_product['price_sale_brutto'] ) && $blk_product['price_sale_brutto'] !== null ? round( (float) $blk_product['price_sale_brutto'], 2 ) : '' );
         $wcProduct->set_weight( $blk_product['weight'] ?? '0' );
         $wcProduct->set_manage_stock( true );
         $wcProduct->set_stock_quantity( $blk_product['quantity'] ?? 0 );
@@ -697,6 +767,9 @@ class BlkSynchronizer {
         if ( ! empty( $blk_product['images'] ) && function_exists( 'fifu_dev_set_image_list' ) ) {
             fifu_dev_set_image_list( $wc_id, $this->array_to_string_with_delimiter( $blk_product['images'] ) );
         }
+
+        $this->record_omnibus_history( $wc_id, $blk_product );
+        $this->sync_promo_category( $wc_id, $blk_product['price_sale_brutto'] !== null );
 
         // WPML: Sync to all translations
         $this->sync_wpml_translations( $wc_id, $blk_product );
@@ -764,6 +837,7 @@ class BlkSynchronizer {
             try {
                 // Sync price
                 $translated_product->set_regular_price( round( (float) $blk_product['price_brutto'], 2 ) );
+                $translated_product->set_sale_price( isset( $blk_product['price_sale_brutto'] ) && $blk_product['price_sale_brutto'] !== null ? round( (float) $blk_product['price_sale_brutto'], 2 ) : '' );
 
                 // Sync stock
                 $translated_product->set_manage_stock( true );
@@ -796,10 +870,76 @@ class BlkSynchronizer {
                     update_post_meta( $translated_id, '_global_unique_id', $blk_product['ean'] );
                 }
 
+                // Omnibus history is per-post-ID - each translation is a
+                // separate WC product, so it needs its own tracked history.
+                $this->record_omnibus_history( $translated_id, $blk_product );
+                $this->sync_promo_category( $translated_id, $blk_product['price_sale_brutto'] !== null );
+
                 blk_debug_log( "WPML: Synced {$blk_product['sku']} to [{$lang_code}] (ID: {$translated_id})" );
             } catch ( Exception $e ) {
                 blk_error_log( "WPML sync error for {$blk_product['sku']} [{$lang_code}]: " . $e->getMessage() );
             }
+        }
+    }
+
+    /**
+     * Record today's actually-charged price (sale price if active, otherwise
+     * regular price) into a 30-day rolling history, and cache the lowest
+     * price found in that history (excluding today) for Omnibus-directive
+     * display. Idempotent per day - repeated syncs on the same day just
+     * overwrite today's entry.
+     */
+    private function record_omnibus_history( $wc_id, $blk_product ) {
+        $today          = date_i18n( 'Y-m-d' );
+        $charged_price  = $blk_product['price_sale_brutto'] ?? $blk_product['price_brutto'] ?? null;
+
+        if ( $charged_price === null ) {
+            return;
+        }
+
+        $history         = get_post_meta( $wc_id, '_blk_omnibus_price_history', true );
+        $history         = is_array( $history ) ? $history : [];
+        $history[ $today ] = round( (float) $charged_price, 2 );
+
+        $cutoff = date_i18n( 'Y-m-d', strtotime( '-30 days' ) );
+        foreach ( $history as $date => $price ) {
+            if ( $date < $cutoff ) {
+                unset( $history[ $date ] );
+            }
+        }
+
+        $history_before_today = $history;
+        unset( $history_before_today[ $today ] );
+
+        // Fallback: no history yet (new product, or first time we've tracked
+        // it) - default to today's regular price rather than showing nothing.
+        // This can never overstate the discount (regular >= sale by design).
+        $lowest_30d = ! empty( $history_before_today )
+            ? min( $history_before_today )
+            : round( (float) ( $blk_product['price_brutto'] ?? $charged_price ), 2 );
+
+        update_post_meta( $wc_id, '_blk_omnibus_price_history', $history );
+        update_post_meta( $wc_id, '_blk_omnibus_lowest_30d', $lowest_30d );
+    }
+
+    /**
+     * Append/remove the "Promocje" product category based on whether a
+     * promotional (sale) price is currently active. Mirrors the behaviour
+     * of the old "Best Market — Aktualizacja Cen (Google Sheet)" plugin:
+     * always appends (never replaces existing categories), and only ever
+     * touches this one term when removing.
+     */
+    private function sync_promo_category( $wc_id, $has_promo ) {
+        if ( $this->promo_category_id <= 0 ) {
+            return;
+        }
+
+        $in_cat = has_term( $this->promo_category_id, 'product_cat', $wc_id );
+
+        if ( $has_promo && ! $in_cat ) {
+            wp_set_object_terms( $wc_id, [ $this->promo_category_id ], 'product_cat', true );
+        } elseif ( ! $has_promo && $in_cat ) {
+            wp_remove_object_terms( $wc_id, $this->promo_category_id, 'product_cat' );
         }
     }
 

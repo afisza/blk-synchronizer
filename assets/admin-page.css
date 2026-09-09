@@ -407,6 +407,49 @@ select.blk-input {
     to { opacity: 1; transform: translateY(0); }
 }
 
+/* ─── Last Sync Summary (persistent until the next sync starts) ─── */
+.blk-last-sync-summary {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.blk-last-sync-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.blk-last-sync-summary strong {
+    font-weight: 600;
+}
+.blk-last-sync-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+}
+.blk-last-sync-table th,
+.blk-last-sync-table td {
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+.blk-last-sync-table th {
+    color: #047857;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: .03em;
+    border-bottom: 1px solid #a7f3d0;
+}
+.blk-last-sync-table td {
+    font-weight: 500;
+    border-bottom: none;
+}
+
 /* ─── Progress Bar ─── */
 .blk-progress {
     width: 100%;
