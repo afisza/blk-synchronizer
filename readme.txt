@@ -15,6 +15,16 @@ php -f delete-all-products.php
 
 == Changelog ==
 
+= 3.2.1 (2026-10-27) =
+* Opisy produktów: clean_description() używa DescriptionCleaner z Best Market
+  Core (gdy wtyczka jest aktywna) i usuwa z opisów z BaseLinkera śmieci z Worda
+  i marketplace'ów (style, spany, klasy Mso, komentarze, zagnieżdżone
+  div/section), zostawiając akapity, pogrubienia i listy. Te same reguły
+  oczyściły już zapisane opisy (`wp bm descriptions clean`), więc
+  has_product_changed() porównuje to samo z tym samym i niezmieniony produkt nie
+  jest nadpisywany przy każdej synchronizacji. Bez Best Market Core działa jak
+  dotąd (stare wyrażenie regularne).
+
 = 3.2.0 (2026-09-09) =
 * Ceny promocyjne z BaseLinkera. Nowe ustawienie "Price Group ID (przed
   promocją)": gdy cena z tej grupy cenowej jest wyższa niż cena z grupy

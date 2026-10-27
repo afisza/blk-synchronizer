@@ -945,10 +945,19 @@ class BlkSynchronizer {
 
     /**
      * Clean HTML description content.
+     *
+     * With Best Market Core active (new theme) its DescriptionCleaner strips the Word/marketplace markup (styles,
+     * spans, Mso classes, wrappers) down to p/strong/lists. The same class cleaned the stored descriptions once
+     * (`wp bm descriptions clean`), so has_product_changed() compares like with like and an unchanged product is
+     * not rewritten on every run.
      */
     private function clean_description( $content ) {
         if ( $content === null ) {
             return '';
+        }
+
+        if ( class_exists( '\BestMarket\Core\Shop\DescriptionCleaner' ) ) {
+            return \BestMarket\Core\Shop\DescriptionCleaner::clean( (string) $content );
         }
 
         $content = preg_replace( '/<\/?o:p>/', '', $content );
