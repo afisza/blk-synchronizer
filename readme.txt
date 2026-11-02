@@ -1,11 +1,7 @@
 === BaseLinker Synchronizer ===
 
-Синхронизацию можно запускать по http-запросу
-?action=blkSynchronizer&method=synchronize
-
-либо через shell
-cd wp-content/plugins/blk-synchronizer/cli
-php -f start-synchronize.php
+Синхронизация запускается по WP-Cron (каждые blk_cron_interval минут) или кнопкой
+в админке (BL Synk). Публичного http-запроса для запуска больше нет (3.2.2).
 
 
 удаление всех продутов только через shell
@@ -14,6 +10,12 @@ php -f delete-all-products.php
 
 
 == Changelog ==
+
+= 3.2.2 (2026-11-02) =
+* Bezpieczeństwo: usunięty publiczny adres ?action=blkSynchronizer&method=synchronize
+  (BlkEndpoints), który bez logowania uruchamiał pełną synchronizację: każdy mógł nim
+  obciążać serwer i limit API BaseLinkera. Synchronizację uruchamia WP-Cron albo przycisk
+  w panelu (nonce + manage_options).
 
 = 3.2.1 (2026-10-27) =
 * Opisy produktów: clean_description() używa DescriptionCleaner z Best Market

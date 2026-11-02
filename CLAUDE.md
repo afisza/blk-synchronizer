@@ -15,16 +15,13 @@ There is no build step, package manager script, or local test suite — this is 
   - PHP syntax: `find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l`
   - JS syntax: `node --check assets/admin-page.js` (and any other file under `assets/*.js`)
 - **CI** (`.github/workflows/ci.yml`): lints PHP/JS on every push/PR to `main`. Pushing a `v*` tag auto-creates a GitHub Release (release notes only — WordPress itself always tracks the `main` branch via the update checker, not tags).
-- **Trigger a sync manually** (no WP-CLI, no cron needed):
-  - HTTP: `GET /?action=blkSynchronizer&method=synchronize` (see `BlkEndpoints::register_endpoints()`) — **unauthenticated**, anyone who knows the URL can trigger it.
-  - From the admin UI: BL Synk menu → "Run sync now" button (AJAX `wp_ajax_blk_start_import`, nonce + `manage_options` required).
+- **Trigger a sync manually**: from the admin UI, BL Synk menu → "Run sync now" button (AJAX `wp_ajax_blk_start_import`, nonce + `manage_options` required). Otherwise WP-Cron runs it every `blk_cron_interval` minutes. The old unauthenticated HTTP trigger (`?action=blkSynchronizer&method=synchronize`, `BlkEndpoints`) was removed in 3.2.2: anyone could start a full sync with it.
 - `readme.txt` references a `cli/start-synchronize.php` and `cli/delete-all-products.php` — that `cli/` directory does **not exist** in this repo; treat those as stale/aspirational unless you find them elsewhere.
 
 ## Architecture
 
-**Bootstrap** (`blk-synchronizer.php`): defines all `BLK_*` constants (paths, tuning knobs, log retention), requires the class files, then wires up three collaborators:
+**Bootstrap** (`blk-synchronizer.php`): defines all `BLK_*` constants (paths, tuning knobs, log retention), requires the class files, then wires up two collaborators:
 - `BlkSynchronizer` — the sync engine (all business logic).
-- `BlkEndpoints` — the unauthenticated HTTP trigger, wraps `$bs`.
 - `BlkHooks` — cron scheduling + the authenticated AJAX trigger, wraps `$bs`.
 
 It also defines the plugin-update-checker instance (points at `github.com/afisza/blk-synchronizer`, branch `main` — this is how the live site self-updates) and several free functions for a file-based mutex (`.import-lock`, `.import-stop`) that all sync entry points share.
