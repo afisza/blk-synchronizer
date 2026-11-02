@@ -14,7 +14,7 @@ There is no build step, package manager script, or local test suite — this is 
 - **Lint (what CI runs)**:
   - PHP syntax: `find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l`
   - JS syntax: `node --check assets/admin-page.js` (and any other file under `assets/*.js`)
-- **CI** (`.github/workflows/ci.yml`): lints PHP/JS on every push/PR to `main`. Pushing a `v*` tag auto-creates a GitHub Release (release notes only — WordPress itself always tracks the `main` branch via the update checker, not tags).
+- **CI** (`.github/workflows/ci.yml`): lints PHP/JS on every push/PR to `main`. Pushing a `v*` tag auto-creates a GitHub Release, and **that release is what WordPress updates to**: with `setBranch('main')` the update checker reads the latest GitHub Release first (then the highest tag, the branch only as a last resort), so a push to `main` alone never reaches the live site. Release flow: bump `Version:` in `blk-synchronizer.php` + changelog in `readme.txt`, push to `main`, then push tag `vX.Y.Z` matching that version.
 - **Trigger a sync manually**: from the admin UI, BL Synk menu → "Run sync now" button (AJAX `wp_ajax_blk_start_import`, nonce + `manage_options` required). Otherwise WP-Cron runs it every `blk_cron_interval` minutes. The old unauthenticated HTTP trigger (`?action=blkSynchronizer&method=synchronize`, `BlkEndpoints`) was removed in 3.2.2: anyone could start a full sync with it.
 - `readme.txt` references a `cli/start-synchronize.php` and `cli/delete-all-products.php` — that `cli/` directory does **not exist** in this repo; treat those as stale/aspirational unless you find them elsewhere.
 

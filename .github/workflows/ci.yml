@@ -27,8 +27,8 @@ jobs:
           for f in assets/*.js; do node --check "$f"; done
 
   release:
-    # Push tagu v* => automatyczny GitHub Release (WordPress i tak czyta branch main,
-    # release sluzy do historii wersji i changelogu)
+    # Push tagu v* => automatyczny GitHub Release. WordPress (plugin-update-checker, branch main)
+    # aktualizuje sie do NAJNOWSZEGO RELEASE, nie do samego brancha: bez tagu nie ma aktualizacji.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: lint
     runs-on: ubuntu-latest
