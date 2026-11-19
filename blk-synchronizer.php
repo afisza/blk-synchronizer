@@ -7,7 +7,7 @@
  * Plugin Name:   BaseLinker Synchronizer Extended
  * Plugin URI:    https://github.com/afisza/blk-synchronizer
  * Description:   Synchronization of BaseLinker and WooCommerce
- * Version:       3.2.2
+ * Version:       3.3.0
  * Author:        Alex Shram
  * Author URI:    https://afisza.com/
  * Text Domain:   blk-synchronizer-main

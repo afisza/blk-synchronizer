@@ -11,6 +11,13 @@ php -f delete-all-products.php
 
 == Changelog ==
 
+= 3.3.0 (2026-11-19) =
+* Zdjęcia produktów w bibliotece mediów: przy aktywnym Best Market Core zdjęcia
+  z BaseLinkera zapisuje ProductImages::sync() (jeden załącznik WebP z podrozmiarami
+  na adres URL, wspólny dla tłumaczeń WPML). Zdjęcie już zapisane trafia do produktu
+  od razu, nowe pobiera zadanie Action Scheduler po synchronizacji, a do tego czasu
+  pokazuje je FIFU. Bez Best Market Core działa jak dotąd (tylko FIFU).
+
 = 3.2.2 (2026-11-02) =
 * Bezpieczeństwo: usunięty publiczny adres ?action=blkSynchronizer&method=synchronize
   (BlkEndpoints), który bez logowania uruchamiał pełną synchronizację: każdy mógł nim

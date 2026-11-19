@@ -697,9 +697,7 @@ class BlkSynchronizer {
                 update_post_meta( $wc_id, 'blk_product_id', $blk_product['product_id'] ?? '' );
                 update_post_meta( $wc_id, 'jet_product_title', $blk_product['name'] );
 
-                if ( ! empty( $blk_product['images'] ) && function_exists( 'fifu_dev_set_image_list' ) ) {
-                    fifu_dev_set_image_list( $wc_id, $this->array_to_string_with_delimiter( $blk_product['images'] ) );
-                }
+                $this->set_images( $wc_id, $blk_product['images'] ?? [] );
 
                 $this->record_omnibus_history( $wc_id, $blk_product );
                 $this->sync_promo_category( $wc_id, $blk_product['price_sale_brutto'] !== null );
@@ -764,9 +762,7 @@ class BlkSynchronizer {
             update_post_meta( $wc_id, '_global_unique_id', $blk_product['ean'] );
         }
 
-        if ( ! empty( $blk_product['images'] ) && function_exists( 'fifu_dev_set_image_list' ) ) {
-            fifu_dev_set_image_list( $wc_id, $this->array_to_string_with_delimiter( $blk_product['images'] ) );
-        }
+        $this->set_images( $wc_id, $blk_product['images'] ?? [] );
 
         $this->record_omnibus_history( $wc_id, $blk_product );
         $this->sync_promo_category( $wc_id, $blk_product['price_sale_brutto'] !== null );
@@ -964,6 +960,24 @@ class BlkSynchronizer {
         $content = preg_replace( '/\s+/', ' ', $content );
 
         return trim( $content );
+    }
+
+    /**
+     * Product photos. With Best Market Core they live in the Media Library (one WebP attachment per URL, shared by
+     * the translations): photos it already has are assigned at once, new ones are downloaded by its background job
+     * (Action Scheduler) and FIFU shows the remote URL until then. Without Best Market Core: FIFU only, as before.
+     */
+    private function set_images( $wc_id, $images ) {
+        $images = is_array( $images ) ? array_values( array_filter( $images, 'strlen' ) ) : [];
+        if ( ! $images ) {
+            return;
+        }
+        if ( class_exists( '\BestMarket\Core\Shop\ProductImages' ) && \BestMarket\Core\Shop\ProductImages::sync( (int) $wc_id, $images ) ) {
+            return;
+        }
+        if ( function_exists( 'fifu_dev_set_image_list' ) ) {
+            fifu_dev_set_image_list( $wc_id, $this->array_to_string_with_delimiter( $images ) );
+        }
     }
 
     /**
